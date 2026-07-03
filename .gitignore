@@ -1,0 +1,17 @@
+# Virtual environment
+venv/
+
+# Caché de álbumes
+cache/
+
+# Música descargada
+ipod/
+
+# Archivos temporales
+*.pyc
+__pycache__/
+
+# Configuración del editor
+.vscode/
+
+namenorm.py
