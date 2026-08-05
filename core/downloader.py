@@ -4,6 +4,7 @@ from pathlib import Path
 
 from core.cover import get_cover
 from core.tagger import tag_mp3
+from core.lyrics import get_lyrics
 
 
 # Cuántos resultados de YouTube pedir para elegir el mejor por duración.
@@ -112,7 +113,7 @@ def _safe_filename(name: str) -> str:
 
 
 def install_album(data: dict, outdir_base="ipod", force=False,
-                  dry_run=False, bitrate=None):
+                  dry_run=False, bitrate=None, lyrics=True):
     """
     Descarga y etiqueta un álbum. Devuelve un resumen:
         {"ok": [...], "skipped": [...], "failed": [...]}
@@ -121,6 +122,7 @@ def install_album(data: dict, outdir_base="ipod", force=False,
     - force:       vuelve a descargar aunque el mp3 ya exista.
     - dry_run:     no descarga; solo muestra qué se buscaría/elegiría.
     - bitrate:     bitrate de audio (p.ej. "192K"). None = mejor VBR.
+    - lyrics:      incrusta letra (USLT) desde LRCLIB y guarda .lrc.
     """
 
     artist = data["artist"]
@@ -238,6 +240,19 @@ def install_album(data: dict, outdir_base="ipod", force=False,
             failed.append(label)
             continue
 
+        # Letra (opcional). Nunca hace fallar la pista: si no hay, seguimos.
+        plain = None
+        if lyrics:
+            lyrics_artist = track_artists[0] if track_artists else artist
+            plain, synced = get_lyrics(
+                lyrics_artist, title, album, track.get("duration_s")
+            )
+            if plain:
+                print("   + lyrics")
+            # Sidecar .lrc sincronizado para reproductores que lo usen.
+            if synced:
+                (outdir / f"{label}.lrc").write_text(synced, encoding="utf8")
+
         tag_mp3(
             mp3=mp3,
             title=title,
@@ -251,6 +266,7 @@ def install_album(data: dict, outdir_base="ipod", force=False,
             cover=cover,
             disc=disc,
             disc_total=disc_total,
+            lyrics=plain,
         )
 
         print("   OK")

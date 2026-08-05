@@ -87,6 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
              "Baja el bitrate para que quepan más canciones en el iPod.",
     )
     p.add_argument(
+        "--no-lyrics",
+        dest="lyrics",
+        action="store_false",
+        help="No incrusta letras. Por defecto se buscan en LRCLIB y se "
+             "incrustan (USLT) + se guarda un .lrc sincronizado.",
+    )
+    p.set_defaults(lyrics=True)
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="No descarga: muestra qué se buscaría y elegiría.",
@@ -125,6 +133,7 @@ def main():
             force=args.force,
             dry_run=args.dry_run,
             bitrate=args.bitrate,
+            lyrics=args.lyrics,
         )
         total_failed += len(summary["failed"])
 
