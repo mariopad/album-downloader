@@ -10,5 +10,8 @@ python musicdl.py install "radiohead" "In Rainbows" --outdir ~/Music
 # Re-descargar aunque ya existan los mp3
 python musicdl.py install "radiohead" "In Rainbows" --force
 
+# Bitrate menor para que quepan más canciones en el iPod
+python musicdl.py install "radiohead" "In Rainbows" --bitrate 192K
+
 # Lote: un 'Artista | Álbum' por línea en un archivo
 python musicdl.py install --from-file albums.txt

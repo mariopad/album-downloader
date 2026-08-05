@@ -10,7 +10,8 @@ CACHE_DIR = Path("cache")
 # `fetch_album` cambie qué campos produce: las entradas viejas (con otra
 # versión o sin ella) se ignoran y se vuelven a pedir a MusicBrainz.
 #   v2: se añadió `duration_s` por pista (verificación por duración).
-CACHE_VERSION = 2
+#   v3: se añadió disco/pista (disc, disc_total, track_no, track_total).
+CACHE_VERSION = 3
 
 
 def _slug(text: str) -> str:

@@ -1,11 +1,12 @@
 from mutagen.id3 import (
     ID3, TIT2, TPE1, TALB, TPE2,
-    TRCK, TDRC, TCON, APIC
+    TRCK, TPOS, TDRC, TCON, APIC
 )
 
 
 def tag_mp3(mp3, title, artist, album, album_artist,
-            year, genre, track, total, cover=None):
+            year, genre, track, total, cover=None,
+            disc=1, disc_total=1):
 
     tags = ID3()
 
@@ -14,6 +15,7 @@ def tag_mp3(mp3, title, artist, album, album_artist,
     tags.add(TALB(encoding=3, text=album))
     tags.add(TPE2(encoding=3, text=album_artist))
     tags.add(TRCK(encoding=3, text=f"{track}/{total}"))
+    tags.add(TPOS(encoding=3, text=f"{disc}/{disc_total}"))
     tags.add(TDRC(encoding=3, text=year))
     tags.add(TCON(encoding=3, text=genre))
 

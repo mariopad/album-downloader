@@ -111,7 +111,8 @@ def _safe_filename(name: str) -> str:
     return name or "untitled"
 
 
-def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
+def install_album(data: dict, outdir_base="ipod", force=False,
+                  dry_run=False, bitrate=None):
     """
     Descarga y etiqueta un álbum. Devuelve un resumen:
         {"ok": [...], "skipped": [...], "failed": [...]}
@@ -119,6 +120,7 @@ def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
     - outdir_base: carpeta raíz de salida (se crea outdir_base/<álbum>).
     - force:       vuelve a descargar aunque el mp3 ya exista.
     - dry_run:     no descarga; solo muestra qué se buscaría/elegiría.
+    - bitrate:     bitrate de audio (p.ej. "192K"). None = mejor VBR.
     """
 
     artist = data["artist"]
@@ -135,6 +137,10 @@ def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
         cover = get_cover(data)
         outdir.mkdir(parents=True, exist_ok=True)
 
+    # Con varios discos, prefijamos el nombre con el disco para ordenar
+    # y evitar colisiones (disco 1 pista 1 vs disco 2 pista 1).
+    multi_disc = any(t.get("disc_total", 1) > 1 for t in tracks)
+
     mode = " (dry-run)" if dry_run else ""
     print(f"\n=== Installing {artist} - {album}{mode} ===\n")
 
@@ -146,8 +152,16 @@ def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
         track_artists = track.get("artists", [artist])
         artist_str = ", ".join(track_artists)
 
+        # Numeración por disco (con fallback al índice global para cachés
+        # viejas o metadatos sin estos campos).
+        disc = track.get("disc", 1)
+        disc_total = track.get("disc_total", 1)
+        track_no = track.get("track_no", i)
+        track_total = track.get("track_total", len(tracks))
+
         # #4: nombre de archivo saneado (evita romper rutas con "/", etc.).
-        label = f"{i:02d} - {_safe_filename(title)}"
+        prefix = f"{disc}-{track_no:02d}" if multi_disc else f"{track_no:02d}"
+        label = f"{prefix} - {_safe_filename(title)}"
         mp3 = outdir / f"{label}.mp3"
 
         print(f"[{i}/{len(tracks)}] {title}")
@@ -197,7 +211,9 @@ def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
             "-f", "ba/b",
             "-x",
             "--audio-format", "mp3",
-            "--audio-quality", "0",
+            # Sin bitrate: mejor VBR ("0"). Con bitrate: CBR fijo (p.ej.
+            # "192K") para controlar el tamaño en el iPod.
+            "--audio-quality", bitrate if bitrate else "0",
             "--no-playlist",
             "--retries", "10",
             "--fragment-retries", "10",
@@ -230,9 +246,11 @@ def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
             album_artist=album_artist,
             year=year,
             genre=genre,
-            track=i,
-            total=len(tracks),
+            track=track_no,
+            total=track_total,
             cover=cover,
+            disc=disc,
+            disc_total=disc_total,
         )
 
         print("   OK")

@@ -81,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Vuelve a descargar aunque el mp3 ya exista.",
     )
     p.add_argument(
+        "--bitrate",
+        metavar="RATE",
+        help="Bitrate de audio, p.ej. 192K (por defecto: mejor VBR). "
+             "Baja el bitrate para que quepan más canciones en el iPod.",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="No descarga: muestra qué se buscaría y elegiría.",
@@ -118,6 +124,7 @@ def main():
             outdir_base=args.outdir,
             force=args.force,
             dry_run=args.dry_run,
+            bitrate=args.bitrate,
         )
         total_failed += len(summary["failed"])
 

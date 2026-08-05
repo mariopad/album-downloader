@@ -214,8 +214,21 @@ def fetch_album(artist: str, album: str) -> Dict:
 
     tracks = []
 
-    for medium in details.get("medium-list", []):
-        for track in medium.get("track-list", []):
+    mediums = details.get("medium-list", [])
+    disc_total = len(mediums)
+
+    for m_index, medium in enumerate(mediums, start=1):
+
+        # Número de disco (1-indexado). Usamos "position" si viene.
+        try:
+            disc_no = int(medium.get("position", m_index))
+        except (TypeError, ValueError):
+            disc_no = m_index
+
+        track_list = medium.get("track-list", [])
+        track_total = len(track_list)
+
+        for t_index, track in enumerate(track_list, start=1):
 
             recording = track.get("recording", {})
 
@@ -234,10 +247,20 @@ def fetch_album(artist: str, album: str) -> Dict:
             except (TypeError, ValueError):
                 duration_s = None
 
+            # Número de pista dentro del disco.
+            try:
+                track_no = int(track.get("position", t_index))
+            except (TypeError, ValueError):
+                track_no = t_index
+
             tracks.append({
                 "title": recording.get("title", ""),
                 "artists": artists,
                 "duration_s": duration_s,
+                "disc": disc_no,
+                "disc_total": disc_total,
+                "track_no": track_no,
+                "track_total": track_total,
             })
 
     return {
