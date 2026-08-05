@@ -83,23 +83,43 @@ def _pick_best(candidates, target):
     return vid, diff
 
 
-#CHAR_MAP = {
-#    "?": "\uFF1F",   # U+FF1F FULLWIDTH QUESTION MARK
-#    ":": "：",   # U+FF1A FULLWIDTH COLON
-#    "/": "／",
-#    "\\": "＼",
-#    "*": "＊",
-#    "\"": "＂",
-#    "<": "＜",
-#    ">": "＞",
-#    "|": "｜",
-#}
+# Caracteres reservados en FAT32/Windows (el iPod usa FAT). Sin sanear,
+# un título con "/" partiría la ruta y crearía subcarpetas fantasma.
+_RESERVED = {
+    "/": "-",
+    "\\": "-",
+    ":": " -",
+    "*": "",
+    "?": "",
+    '"': "'",
+    "<": "(",
+    ">": ")",
+    "|": "-",
+}
 
-#def windows_safe_unicode(name: str) -> str:
-#    return "".join(CHAR_MAP.get(c, c) for c in name)
+
+def _safe_filename(name: str) -> str:
+    """
+    Convierte un título en un nombre de archivo válido y seguro:
+    reemplaza caracteres reservados, quita caracteres de control y
+    recorta espacios/puntos finales (no permitidos en FAT/Windows).
+    """
+    name = "".join(_RESERVED.get(c, c) for c in name)
+    name = "".join(c for c in name if ord(c) >= 32)
+    name = name.strip().rstrip(". ")
+
+    return name or "untitled"
 
 
-def install_album(data: dict):
+def install_album(data: dict, outdir_base="ipod", force=False, dry_run=False):
+    """
+    Descarga y etiqueta un álbum. Devuelve un resumen:
+        {"ok": [...], "skipped": [...], "failed": [...]}
+
+    - outdir_base: carpeta raíz de salida (se crea outdir_base/<álbum>).
+    - force:       vuelve a descargar aunque el mp3 ya exista.
+    - dry_run:     no descarga; solo muestra qué se buscaría/elegiría.
+    """
 
     artist = data["artist"]
     album = data["album"]
@@ -108,12 +128,17 @@ def install_album(data: dict):
     genre = data["genre"]
     tracks = data["tracks"]
 
-    cover = get_cover(data)
+    outdir = Path(outdir_base) / _safe_filename(album)
 
-    outdir = Path("ipod") / album
-    outdir.mkdir(parents=True, exist_ok=True)
+    cover = None
+    if not dry_run:
+        cover = get_cover(data)
+        outdir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n=== Installing {artist} - {album} ===\n")
+    mode = " (dry-run)" if dry_run else ""
+    print(f"\n=== Installing {artist} - {album}{mode} ===\n")
+
+    ok, skipped, failed = [], [], []
 
     for i, track in enumerate(tracks, start=1):
 
@@ -121,10 +146,17 @@ def install_album(data: dict):
         track_artists = track.get("artists", [artist])
         artist_str = ", ".join(track_artists)
 
+        # #4: nombre de archivo saneado (evita romper rutas con "/", etc.).
+        label = f"{i:02d} - {_safe_filename(title)}"
+        mp3 = outdir / f"{label}.mp3"
+
         print(f"[{i}/{len(tracks)}] {title}")
 
-        #output = outdir / f"{i:02d} - {windows_safe_unicode(title)}.%(ext)s"
-        output = outdir / f"{i:02d} - {title}.%(ext)s"
+        # #3: reanudar. Si ya existe y no forzamos, saltamos.
+        if not force and not dry_run and mp3.exists() and mp3.stat().st_size > 0:
+            print("   SKIP (ya descargado)")
+            skipped.append(label)
+            continue
 
         query = f"{artist} - {title} audio"
 
@@ -145,6 +177,17 @@ def install_album(data: dict):
         else:
             print("   WARN: sin metadatos de búsqueda, usando primer resultado")
             source = f"ytsearch1:{query}"
+
+        # #5: dry-run — mostrar el candidato elegido sin descargar ni etiquetar.
+        if dry_run:
+            if video_id:
+                d = f"{diff:.0f}s" if diff is not None else "n/a"
+                print(f"   would fetch {source}  (Δdur {d})")
+            else:
+                print(f"   would fetch first result of: ytsearch1:{query}")
+            continue
+
+        output = outdir / f"{label}.%(ext)s"
 
         cmd = [
             sys.executable,
@@ -168,13 +211,16 @@ def install_album(data: dict):
             "-o", str(output),
         ]
 
+        # Con --force reescribimos el archivo existente.
+        if force:
+            cmd.append("--force-overwrites")
+
         result = subprocess.run(cmd)
 
-        if result.returncode != 0:
+        if result.returncode != 0 or not mp3.exists():
             print("   FAILED DOWNLOAD")
+            failed.append(label)
             continue
-
-        mp3 = outdir / f"{i:02d} - {title}.mp3"
 
         tag_mp3(
             mp3=mp3,
@@ -190,5 +236,19 @@ def install_album(data: dict):
         )
 
         print("   OK")
+        ok.append(label)
 
-    print(f"\nFinished installing '{album}'.")
+    # #4: resumen final — nunca terminar en silencio con pistas faltantes.
+    if dry_run:
+        print(f"\nDry-run for '{album}': {len(tracks)} tracks previewed.")
+    else:
+        print(
+            f"\nSummary for '{album}': "
+            f"{len(ok)} ok, {len(skipped)} skipped, {len(failed)} failed."
+        )
+        if failed:
+            print("Failed tracks:")
+            for t in failed:
+                print(f"   - {t}")
+
+    return {"ok": ok, "skipped": skipped, "failed": failed}

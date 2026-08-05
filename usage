@@ -1,1 +1,14 @@
+# Un álbum
 python musicdl.py install "bad bunny" "DeBÍ TiRAR MáS FOToS"
+
+# Previsualizar sin descargar (verifica el match de MusicBrainz + YouTube)
+python musicdl.py install "bad bunny" "DeBÍ TiRAR MáS FOToS" --dry-run
+
+# Elegir carpeta de salida (por defecto: ipod/)
+python musicdl.py install "radiohead" "In Rainbows" --outdir ~/Music
+
+# Re-descargar aunque ya existan los mp3
+python musicdl.py install "radiohead" "In Rainbows" --force
+
+# Lote: un 'Artista | Álbum' por línea en un archivo
+python musicdl.py install --from-file albums.txt
