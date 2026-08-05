@@ -226,9 +226,18 @@ def fetch_album(artist: str, album: str) -> Dict:
 
             artists = _parse_artist_credit(credits)
 
+            # Duración esperada (para verificar el resultado de YouTube).
+            # MusicBrainz devuelve la longitud en milisegundos.
+            length_ms = recording.get("length") or track.get("length")
+            try:
+                duration_s = round(int(length_ms) / 1000) if length_ms else None
+            except (TypeError, ValueError):
+                duration_s = None
+
             tracks.append({
                 "title": recording.get("title", ""),
                 "artists": artists,
+                "duration_s": duration_s,
             })
 
     return {
