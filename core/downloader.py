@@ -1,5 +1,7 @@
+import random
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from core.cover import get_cover
@@ -15,13 +17,116 @@ SEARCH_RESULTS = 5
 # un edit acelerado o directamente la canción equivocada.
 DURATION_TOLERANCE = 20
 
+# --- Robustez frente a 403/429 de YouTube ---
+#
+# YouTube devuelve 403 (Forbidden), 429 (Too Many Requests) o pide
+# "confirmar que no eres un bot" de forma intermitente. yt-dlp reintenta a
+# nivel HTTP con --retries, pero eso repite SIEMPRE el mismo player_client,
+# así que no sortea un bloqueo por cliente/firma. La estrategia robusta es:
+#   1) reintentar con backoff exponencial (para 429/ratelimit), y
+#   2) rotar el player_client de yt-dlp (para 403/bloqueos de firma/bot).
+# Un error no transitorio (vídeo privado, borrado, etc.) falla rápido sin
+# malgastar rotaciones.
+
+# Intentos por cada cliente antes de rotar al siguiente.
+MAX_ATTEMPTS_PER_CLIENT = 3
+
+# Clientes a rotar en la DESCARGA. None = sin override: yt-dlp elige el
+# cliente web (audio puro opus/m4a); ver nota en el comando de descarga.
+# tv/ios/mweb/web_safari suelen esquivar bloqueos que afectan al web.
+DOWNLOAD_CLIENTS = [None, "tv", "ios", "mweb", "web_safari"]
+
+# Clientes a rotar en la BÚSQUEDA (más ligera; android suele bastar).
+SEARCH_CLIENTS = ["android", "web", "ios", "tv"]
+
+# Enfriamiento antes de la segunda pasada sobre las pistas fallidas: si
+# fallaron por rate-limit, esperar da margen a que YouTube nos vuelva a servir.
+RETRY_PASS_COOLDOWN = 15
+
+# Backoff máximo (segundos) entre reintentos del mismo cliente.
+MAX_BACKOFF = 30
+
+# Señales, en la salida de yt-dlp, de un error TRANSITORIO que merece
+# reintentar/rotar cliente (en minúsculas).
+_TRANSIENT_SIGNS = (
+    "http error 403",
+    "forbidden",
+    "http error 429",
+    "too many requests",
+    "sign in to confirm",
+    "confirm you're not a bot",
+    "unable to download",
+    "read timed out",
+    "connection reset",
+    "connection aborted",
+    "temporary failure",
+    "timed out",
+    "the read operation timed out",
+    "unable to extract",
+)
+
+
+def _is_transient(text: str) -> bool:
+    """¿La salida de yt-dlp indica un fallo transitorio (403/429/bot/red)?"""
+    low = text.lower()
+    return any(sign in low for sign in _TRANSIENT_SIGNS)
+
+
+def _run_ytdlp(base_cmd, clients, describe="", attempts_per_client=None):
+    """
+    Ejecuta yt-dlp rotando `clients` y reintentando con backoff exponencial.
+
+    - base_cmd: comando yt-dlp SIN el `--extractor-args player_client=...`
+      (lo añade este helper por cada cliente).
+    - clients:  lista de player_client a probar en orden. None = sin override.
+    - describe: etiqueta corta para los mensajes ("search"/"download").
+
+    Para en el primer éxito (returncode 0). Ante un error NO transitorio no
+    insiste: devuelve enseguida. Devuelve (returncode, salida_combinada).
+    """
+    attempts = attempts_per_client or MAX_ATTEMPTS_PER_CLIENT
+    last_rc, last_out = 1, ""
+    label = f" [{describe}]" if describe else ""
+
+    for client in clients:
+        cmd = list(base_cmd)
+        if client:
+            cmd += ["--extractor-args", f"youtube:player_client={client}"]
+        tag = client or "default"
+
+        for attempt in range(1, attempts + 1):
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            out = (result.stdout or "") + (result.stderr or "")
+            last_rc, last_out = result.returncode, out
+
+            if result.returncode == 0:
+                return 0, out
+
+            # Fallo no transitorio (privado, borrado, sin resultados...): no
+            # vale la pena rotar clientes ni reintentar, falla rápido.
+            if not _is_transient(out):
+                return result.returncode, out
+
+            if attempt < attempts:
+                # Backoff exponencial con jitter (2^n s), acotado.
+                delay = min(2 ** attempt + random.uniform(0, 1.5), MAX_BACKOFF)
+                print(
+                    f"   retry{label}: bloqueo transitorio (client={tag}), "
+                    f"intento {attempt}/{attempts}, espera {delay:.0f}s"
+                )
+                time.sleep(delay)
+            else:
+                print(f"   retry{label}: client={tag} agotado, rotando cliente")
+
+    return last_rc, last_out
+
 
 def _search_candidates(query: str, n: int):
     """
     Pide los primeros `n` resultados de YouTube para `query` y devuelve
     una lista de (duración_en_segundos | None, video_id), sin descargar.
     """
-    cmd = [
+    base = [
         sys.executable,
         "-m",
         "yt_dlp",
@@ -29,14 +134,14 @@ def _search_candidates(query: str, n: int):
         "--flat-playlist",
         "--print", "%(duration)s\t%(id)s",
         "--no-warnings",
-        "--extractor-args", "youtube:player_client=android",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Rota clientes/reintenta si YouTube devuelve 403/429 en la búsqueda.
+    _rc, out = _run_ytdlp(base, SEARCH_CLIENTS, describe="search")
 
     candidates = []
-    for line in result.stdout.splitlines():
+    for line in out.splitlines():
         line = line.strip()
         if "\t" not in line:
             continue
@@ -146,10 +251,17 @@ def install_album(data: dict, outdir_base="ipod", force=False,
     mode = " (dry-run)" if dry_run else ""
     print(f"\n=== Installing {artist} - {album}{mode} ===\n")
 
-    ok, skipped, failed = [], [], []
+    ok, skipped = [], []
+    # Pistas que fallaron la descarga, guardadas con su índice para una
+    # segunda pasada al final del álbum.
+    failed_tracks = []
 
-    for i, track in enumerate(tracks, start=1):
-
+    def process(i, track, is_retry=False):
+        """
+        Busca, descarga y etiqueta una pista. Devuelve (status, label) con
+        status en {"ok", "skipped", "failed"}. `is_retry` solo cambia los
+        mensajes (segunda pasada sobre fallidas).
+        """
         title = track["title"]
         track_artists = track.get("artists", [artist])
         artist_str = ", ".join(track_artists)
@@ -166,13 +278,13 @@ def install_album(data: dict, outdir_base="ipod", force=False,
         label = f"{prefix} - {_safe_filename(title)}"
         mp3 = outdir / f"{label}.mp3"
 
-        print(f"[{i}/{len(tracks)}] {title}")
+        head = "retry " if is_retry else ""
+        print(f"[{head}{i}/{len(tracks)}] {title}")
 
         # #3: reanudar. Si ya existe y no forzamos, saltamos.
         if not force and not dry_run and mp3.exists() and mp3.stat().st_size > 0:
             print("   SKIP (ya descargado)")
-            skipped.append(label)
-            continue
+            return "skipped", label
 
         query = f"{artist} - {title} audio"
 
@@ -201,11 +313,11 @@ def install_album(data: dict, outdir_base="ipod", force=False,
                 print(f"   would fetch {source}  (Δdur {d})")
             else:
                 print(f"   would fetch first result of: ytsearch1:{query}")
-            continue
+            return "skipped", label
 
         output = outdir / f"{label}.%(ext)s"
 
-        cmd = [
+        base_cmd = [
             sys.executable,
             "-m",
             "yt_dlp",
@@ -219,11 +331,13 @@ def install_album(data: dict, outdir_base="ipod", force=False,
             "--no-playlist",
             "--retries", "10",
             "--fragment-retries", "10",
-            # Nota: no forzamos player_client=android aquí. Ese cliente ya
-            # no expone formatos "audio only" (experimento SABR de YouTube),
-            # así que "ba/b" caía a un formato con vídeo. Dejando que yt-dlp
-            # elija cliente sí obtenemos audio puro (opus/m4a). El runtime de
-            # JS (node) es necesario para resolver el nsig del cliente web.
+            # Espaciado suave entre peticiones para no disparar el rate-limit
+            # (429) de YouTube en álbumes largos.
+            "--sleep-requests", "1",
+            # Nota: el primer cliente es None (sin override). Ese cliente web
+            # sí expone formatos "audio only" (opus/m4a); android ya no, por el
+            # experimento SABR de YouTube. El runtime de JS (node) resuelve el
+            # nsig del cliente web. _run_ytdlp rota a tv/ios/... si hay 403.
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "--js-runtimes", "node",
             "-o", str(output),
@@ -231,14 +345,19 @@ def install_album(data: dict, outdir_base="ipod", force=False,
 
         # Con --force reescribimos el archivo existente.
         if force:
-            cmd.append("--force-overwrites")
+            base_cmd.append("--force-overwrites")
 
-        result = subprocess.run(cmd)
+        # Descarga robusta: reintenta con backoff y rota player_client ante
+        # 403/429/bot-check. Solo se rinde tras agotar todos los clientes.
+        rc, out = _run_ytdlp(base_cmd, DOWNLOAD_CLIENTS, describe="download")
 
-        if result.returncode != 0 or not mp3.exists():
+        if rc != 0 or not mp3.exists():
             print("   FAILED DOWNLOAD")
-            failed.append(label)
-            continue
+            # Última línea de error de yt-dlp, útil para diagnosticar.
+            err = [ln for ln in out.splitlines() if ln.strip().lower().startswith("error")]
+            if err:
+                print(f"   {err[-1].strip()}")
+            return "failed", label
 
         # Letra (opcional). Nunca hace fallar la pista: si no hay, seguimos.
         plain = None
@@ -270,7 +389,37 @@ def install_album(data: dict, outdir_base="ipod", force=False,
         )
 
         print("   OK")
-        ok.append(label)
+        return "ok", label
+
+    for i, track in enumerate(tracks, start=1):
+        status, label = process(i, track)
+        if status == "ok":
+            ok.append(label)
+        elif status == "skipped":
+            skipped.append(label)
+        else:
+            failed_tracks.append((i, track, label))
+
+    # Segunda pasada sobre las pistas que fallaron la descarga. Un fallo suele
+    # deberse a un 403/429 puntual; tras un enfriamiento y volviendo a rotar
+    # clientes, muchas se recuperan. Solo se hace una vez, en modo real.
+    if failed_tracks and not dry_run:
+        print(
+            f"\n--- Retrying {len(failed_tracks)} failed track(s) "
+            f"after {RETRY_PASS_COOLDOWN}s cooldown ---\n"
+        )
+        time.sleep(RETRY_PASS_COOLDOWN)
+
+        still_failed = []
+        for i, track, _label in failed_tracks:
+            status, label = process(i, track, is_retry=True)
+            if status == "ok":
+                ok.append(label)
+            else:
+                still_failed.append(label)
+        failed = still_failed
+    else:
+        failed = [label for _i, _t, label in failed_tracks]
 
     # #4: resumen final — nunca terminar en silencio con pistas faltantes.
     if dry_run:
