@@ -1,6 +1,6 @@
-# musicdl
+# Album downloader
 
-A small command-line tool that downloads full albums for an **old iPod** (or
+A small CLI tool that downloads full albums for an **old iPod** (or
 any music player), tagged properly and ready to sync.
 
 It pulls the correct tracklist and metadata from **MusicBrainz**, finds each
@@ -9,18 +9,17 @@ clean **ID3v2.3** tags (title, artist, album, track/disc numbers, year, genre,
 cover art, and lyrics).
 
 > **Personal use.** This tool downloads audio from YouTube for your own
-> library. Make sure that's allowed where you are before using it.
+> library.
 
 ---
 
-## Why it's more than a `yt-dlp` one-liner
+## Features
 
 - **Right track, not the first hit.** For every song it fetches several
   YouTube results and picks the one whose **duration matches MusicBrainz**, so
   you don't silently end up with a live version, a sped-up edit, or an
   hour-long loop. It warns when even the closest match is suspicious.
-- **Audio only.** Downloads `bestaudio` (opus/m4a) instead of a full video,
-  then converts to MP3 — faster, smaller, no wasted bandwidth.
+- **Audio only.** Downloads `bestaudio` (opus/m4a), then converts to MP3.
 - **iPod-friendly tags.** ID3**v2.3**, FAT-safe filenames, per-disc track
   numbering, embedded cover art, and embedded lyrics.
 - **Safe to re-run.** Already-downloaded tracks are skipped; a failed run
@@ -132,12 +131,12 @@ Each MP3 gets: **title, artist, album, album artist, track/total,
 disc/total, year, genre, 500 px cover** (Cover Art Archive), and **unsynced
 lyrics** (`USLT`, from [LRCLIB](https://lrclib.net)).
 
-### Will lyrics show on my device?
+### Lyrics
 
-- **Old iPod** — yes, embedded lyrics display on the Now Playing screen.
-- **Android** — only in players that read embedded/`.lrc` lyrics (e.g.
+- They will be displayed on the **iPod**
+- On **Android**, they will only be displayed in players that support embedded/`.lrc` lyrics (e.g.
   Poweramp, Musicolet, Retro Music).
-- **iPhone (stock Music app)** — usually **not** for sideloaded files.
+- They will probably not be displayed on **iPhone**
 
 Coverage from LRCLIB is very high for mainstream music; instrumental tracks
 and misses are skipped silently. Use `--no-lyrics` to turn the feature off.
@@ -167,7 +166,6 @@ and re-fetched automatically, so you never run on outdated data.
 
 ## Notes & limitations
 
-- `cache/`, `ipod/`, and `.venv/` are git-ignored.
 - The duration check warns but still downloads the closest match when nothing
   is within tolerance — sanity-check odd albums with `--dry-run` first.
 - Releases with no date in MusicBrainz get an empty year; genre falls back to
