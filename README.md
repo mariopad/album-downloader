@@ -23,7 +23,10 @@ cover art, and lyrics).
 - **iPod-friendly tags.** ID3**v2.3**, FAT-safe filenames, per-disc track
   numbering, embedded cover art, and embedded lyrics.
 - **Safe to re-run.** Already-downloaded tracks are skipped; a failed run
-  resumes instead of starting over.
+  resumes instead of starting over. A track counts as done only if it has the
+  audio **and** its lyrics — if the MP3 is already there but has no lyrics,
+  re-running fetches and embeds them **without re-downloading the audio** (handy
+  for libraries pulled before lyrics existed).
 - **Honest about failures.** Every run ends with an `ok / skipped / failed`
   summary and exits non-zero if anything failed.
 

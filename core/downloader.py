@@ -4,9 +4,25 @@ import sys
 import time
 from pathlib import Path
 
+from mutagen.id3 import ID3, ID3NoHeaderError
+
 from core.cover import get_cover
 from core.tagger import tag_mp3
 from core.lyrics import get_lyrics
+
+
+def _has_lyrics(mp3: Path) -> bool:
+    """
+    ¿El mp3 ya tiene letra incrustada (un frame USLT con texto)? Se usa para
+    decidir si una pista ya descargada está realmente completa o le falta la
+    letra y conviene rellenarla sin volver a bajar el audio.
+    """
+    try:
+        tags = ID3(mp3)
+    except (ID3NoHeaderError, OSError, Exception):
+        return False
+
+    return any(f.text and f.text.strip() for f in tags.getall("USLT"))
 
 
 # Cuántos resultados de YouTube pedir para elegir el mejor por duración.
@@ -295,10 +311,58 @@ def install_album(data: dict, outdir_base="ipod", force=False,
         head = "retry " if is_retry else ""
         print(f"[{head}{i}/{len(tracks)}] {title}")
 
-        # #3: reanudar. Si ya existe y no forzamos, saltamos.
+        def fetch_lyrics():
+            """Busca la letra en LRCLIB (si está activada). (plain, synced)."""
+            if not lyrics:
+                return None, None
+            lyrics_artist = track_artists[0] if track_artists else artist
+            # El resto de artistas acreditados (feats) ayudan a la búsqueda
+            # libre de LRCLIB para títulos que indexa como "(feat. X)".
+            extra_artists = track_artists[1:] if track_artists else []
+            plain, synced = get_lyrics(
+                lyrics_artist, title, album, track.get("duration_s"),
+                extra_artists=extra_artists,
+            )
+            if synced:
+                # Sidecar .lrc sincronizado para reproductores que lo usen.
+                (outdir / f"{label}.lrc").write_text(synced, encoding="utf8")
+            return plain, synced
+
+        def retag(plain):
+            """(Re)escribe los tags del mp3 con la metadata completa + letra."""
+            tag_mp3(
+                mp3=mp3,
+                title=title,
+                artist=artist_str,
+                album=album,
+                album_artist=album_artist,
+                year=year,
+                genre=genre,
+                track=track_no,
+                total=track_total,
+                cover=cover,
+                disc=disc,
+                disc_total=disc_total,
+                lyrics=plain,
+            )
+
+        # #3: reanudar. Una pista solo está "completa" si tiene el audio Y,
+        # cuando pedimos letra, también la letra. Si el mp3 ya existe pero le
+        # falta la letra, la buscamos y la incrustamos SIN volver a descargar
+        # el audio (rellena bibliotecas bajadas antes de tener letras).
         if not force and not dry_run and mp3.exists() and mp3.stat().st_size > 0:
-            print("   SKIP (ya descargado)")
-            return "skipped", label
+            if not lyrics or _has_lyrics(mp3):
+                print("   SKIP (ya descargado)")
+                return "skipped", label
+
+            plain, _synced = fetch_lyrics()
+            if not plain:
+                print("   SKIP (ya descargado; sin letra disponible)")
+                return "skipped", label
+
+            retag(plain)
+            print("   + lyrics (sin re-descargar audio)")
+            return "ok", label
 
         target = track.get("duration_s")
 
@@ -383,33 +447,11 @@ def install_album(data: dict, outdir_base="ipod", force=False,
             return "failed", label
 
         # Letra (opcional). Nunca hace fallar la pista: si no hay, seguimos.
-        plain = None
-        if lyrics:
-            lyrics_artist = track_artists[0] if track_artists else artist
-            plain, synced = get_lyrics(
-                lyrics_artist, title, album, track.get("duration_s")
-            )
-            if plain:
-                print("   + lyrics")
-            # Sidecar .lrc sincronizado para reproductores que lo usen.
-            if synced:
-                (outdir / f"{label}.lrc").write_text(synced, encoding="utf8")
+        plain, _synced = fetch_lyrics()
+        if plain:
+            print("   + lyrics")
 
-        tag_mp3(
-            mp3=mp3,
-            title=title,
-            artist=artist_str,
-            album=album,
-            album_artist=album_artist,
-            year=year,
-            genre=genre,
-            track=track_no,
-            total=track_total,
-            cover=cover,
-            disc=disc,
-            disc_total=disc_total,
-            lyrics=plain,
-        )
+        retag(plain)
 
         print("   OK")
         return "ok", label
