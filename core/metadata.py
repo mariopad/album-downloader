@@ -153,20 +153,83 @@ def _parse_artist_credit(artist_credit) -> List[str]:
     return artists
 
 
-def fetch_album(artist: str, album: str) -> Dict:
+def _medium_track_count(release: dict) -> int:
+    """Suma de pistas de todos los discos de un release de búsqueda."""
+    total = 0
+    for m in release.get("medium-list", []):
+        try:
+            total += int(m.get("track-count", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def list_releases(artist: str, album: str, limit: int = 25) -> List[Dict]:
+    """
+    Devuelve los releases candidatos (ediciones) de un álbum, ya ordenados
+    igual que los elegiría `fetch_album`: el primero es el que se usaría por
+    defecto. Cada entrada trae lo justo para distinguir una edición de otra
+    (fecha, nº de pistas, formato, país) y su release-id de MusicBrainz, que
+    se puede pasar a `--release-id` para fijar esa edición concreta.
+    """
     search = musicbrainzngs.search_releases(
         artist=artist,
         release=album,
-        limit=10,
+        limit=limit,
     )
 
     releases = search.get("release-list", [])
 
-    if not releases:
-        raise RuntimeError(f"No se encontró '{album}' de '{artist}'.")
+    ordered = sorted(
+        releases,
+        key=lambda r: (_release_score(r, artist, album), r.get("date", "")),
+        reverse=True,
+    )
 
-    release = _choose_release(releases, artist, album)
-    mbid = release["id"]
+    out = []
+    for r in ordered:
+        formats = "/".join(
+            sorted({m.get("format") or "?" for m in r.get("medium-list", [])})
+        ) or "?"
+        ac = (
+            r.get("artist-credit", [{}])[0]
+            .get("artist", {})
+            .get("name", "")
+        )
+        out.append({
+            "id": r["id"],
+            "date": r.get("date", "") or "",
+            "tracks": _medium_track_count(r),
+            "format": formats,
+            "country": r.get("country") or "??",
+            "status": r.get("status") or "",
+            "artist": ac,
+            "title": r.get("title", ""),
+        })
+
+    return out
+
+
+def fetch_album(artist: str, album: str, release_id: str = None) -> Dict:
+    # Con release_id fijamos la edición exacta y saltamos la búsqueda/scoring.
+    # Útil cuando el "mejor" release por defecto no es el que quieres (p.ej.
+    # una reedición con bonus tracks en vez del álbum original).
+    if release_id:
+        mbid = release_id
+    else:
+        search = musicbrainzngs.search_releases(
+            artist=artist,
+            release=album,
+            limit=10,
+        )
+
+        releases = search.get("release-list", [])
+
+        if not releases:
+            raise RuntimeError(f"No se encontró '{album}' de '{artist}'.")
+
+        release = _choose_release(releases, artist, album)
+        mbid = release["id"]
 
     details = musicbrainzngs.get_release_by_id(
         mbid,

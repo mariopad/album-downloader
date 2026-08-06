@@ -27,16 +27,22 @@ def _slug(text: str) -> str:
     return text
 
 
-def cache_path(artist: str, album: str) -> Path:
+def cache_path(artist: str, album: str, release_id: str = None) -> Path:
     artist_dir = CACHE_DIR / _slug(artist)
     artist_dir.mkdir(parents=True, exist_ok=True)
 
-    return artist_dir / f"{_slug(album)}.json"
+    # Al fijar una edición concreta, la cacheamos aparte para no pisar (ni
+    # servir) la del álbum elegido por defecto.
+    name = _slug(album)
+    if release_id:
+        name = f"{name}--{release_id}"
+
+    return artist_dir / f"{name}.json"
 
 
-def load_cache(artist: str, album: str):
+def load_cache(artist: str, album: str, release_id: str = None):
 
-    path = cache_path(artist, album)
+    path = cache_path(artist, album, release_id)
 
     if not path.exists():
         return None
@@ -55,9 +61,9 @@ def load_cache(artist: str, album: str):
     return None
 
 
-def save_cache(artist: str, album: str, data: dict):
+def save_cache(artist: str, album: str, data: dict, release_id: str = None):
 
-    path = cache_path(artist, album)
+    path = cache_path(artist, album, release_id)
 
     entry = {
         "version": CACHE_VERSION,

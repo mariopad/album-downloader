@@ -189,6 +189,20 @@ def _pick_best(candidates, target):
     return vid, diff
 
 
+# El buscador de YouTube devuelve CERO resultados para algunas queries
+# cortas (p.ej. un título de una sola palabra malsonante como "Puta"): no es
+# un 403/429 ni un problema de cliente —rotar player_client o reintentar no
+# cambia nada—, la query en sí no da resultados. Añadir un término descriptivo
+# la rescata. Probamos varias formulaciones en orden y usamos la primera que
+# devuelva candidatos.
+def _search_queries(artist: str, title: str):
+    return [
+        f"{artist} - {title} audio",
+        f"{artist} {title} official audio",
+        f"{artist} {title} letra",
+    ]
+
+
 # Caracteres reservados en FAT32/Windows (el iPod usa FAT). Sin sanear,
 # un título con "/" partiría la ruta y crearía subcarpetas fantasma.
 _RESERVED = {
@@ -286,13 +300,22 @@ def install_album(data: dict, outdir_base="ipod", force=False,
             print("   SKIP (ya descargado)")
             return "skipped", label
 
-        query = f"{artist} - {title} audio"
+        target = track.get("duration_s")
 
         # Verificación por duración: en vez de descargar a ciegas el primer
         # resultado, pedimos varios y elegimos el más cercano a la duración
-        # que MusicBrainz reporta para esta pista.
-        target = track.get("duration_s")
-        candidates = _search_candidates(query, SEARCH_RESULTS)
+        # que MusicBrainz reporta para esta pista. Si una formulación no
+        # devuelve nada (búsqueda de YouTube que ignora ciertos títulos
+        # cortos), probamos la siguiente antes de rendirnos.
+        queries = _search_queries(artist, title)
+        query = queries[0]
+        candidates = []
+        for q in queries:
+            candidates = _search_candidates(q, SEARCH_RESULTS)
+            if candidates:
+                query = q
+                break
+
         video_id, diff = _pick_best(candidates, target)
 
         if video_id:

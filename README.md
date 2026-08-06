@@ -80,6 +80,13 @@ python musicdl.py install "Daft Punk" "Discovery" --dry-run
 # Choose the output folder
 python musicdl.py install "Radiohead" "In Rainbows" --outdir ~/Music
 
+# List every edition of an album (to avoid a bonus-track reissue)
+python musicdl.py install "MF DOOM" "Operation: Doomsday" --list-releases
+
+# Pin one exact edition by its MusicBrainz release ID
+python musicdl.py install "MF DOOM" "Operation: Doomsday" \
+    --release-id 2ed8a86a-7396-4aef-8b0f-21e6dc6ade9a
+
 # Smaller files so more songs fit on the iPod
 python musicdl.py install "Radiohead" "In Rainbows" --bitrate 192K
 
@@ -106,6 +113,8 @@ Pink Floyd | The Wall
 | `artist album` | The album to download (omit when using `--from-file`). |
 | `--from-file PATH` | Batch mode: `Artist \| Album` (or tab-separated) per line. |
 | `--outdir DIR` | Base output folder (default: `ipod`). |
+| `--list-releases` | List every MusicBrainz edition (date, track count, format, ID) and exit. The first, marked `*`, is the default choice. |
+| `--release-id MBID` | Pin one exact edition by its MusicBrainz release ID — use it when the default pick is a reissue with bonus tracks instead of the original. Not valid with `--from-file`. |
 | `--bitrate RATE` | Fixed audio bitrate, e.g. `192K` (default: best VBR, ~256 kbps). |
 | `--force` | Re-download tracks even if the MP3 already exists. |
 | `--no-lyrics` | Don't fetch/embed lyrics (on by default). |

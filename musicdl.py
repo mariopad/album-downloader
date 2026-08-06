@@ -1,23 +1,41 @@
 import argparse
 import sys
 
-from core.metadata import fetch_album
+from core.metadata import fetch_album, list_releases
 from core.downloader import install_album
 from core.cache import load_cache, save_cache
 
 
-def get_metadata(artist: str, album: str) -> dict:
+def get_metadata(artist: str, album: str, release_id: str = None) -> dict:
     """Devuelve los metadatos del álbum, usando la caché si está vigente."""
-    data = load_cache(artist, album)
+    data = load_cache(artist, album, release_id)
 
     if data is None:
         print(f"Fetching metadata for '{artist} - {album}' from MusicBrainz...")
-        data = fetch_album(artist, album)
-        save_cache(artist, album, data)
+        data = fetch_album(artist, album, release_id)
+        save_cache(artist, album, data, release_id)
     else:
         print(f"Using cached metadata for '{artist} - {album}'.")
 
     return data
+
+
+def print_releases(artist: str, album: str):
+    """Lista las ediciones disponibles de un álbum para elegir con --release-id."""
+    releases = list_releases(artist, album)
+    if not releases:
+        print(f"No se encontró '{album}' de '{artist}'.")
+        return
+
+    print(f"Releases for '{artist} - {album}' (first = default choice):\n")
+    for i, r in enumerate(releases):
+        mark = "* " if i == 0 else "  "
+        date = r["date"] or "----"
+        print(
+            f"{mark}{r['tracks']:>2} tracks  {date:<10}  {r['format']:<14} "
+            f"{r['country']:<3}  {r['id']}"
+        )
+    print("\nPin one with:  --release-id <ID>")
 
 
 def read_album_list(path: str):
@@ -76,6 +94,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Carpeta base de salida (por defecto: ipod).",
     )
     p.add_argument(
+        "--release-id",
+        metavar="MBID",
+        help="Fija una edición concreta por su MusicBrainz release ID "
+             "(evita reediciones con bonus tracks). Usa --list-releases "
+             "para ver los IDs disponibles. No válido con --from-file.",
+    )
+    p.add_argument(
+        "--list-releases",
+        action="store_true",
+        help="Lista las ediciones del álbum (fecha, nº pistas, formato, ID) "
+             "y sale, sin descargar. Elige una con --release-id.",
+    )
+    p.add_argument(
         "--force",
         action="store_true",
         help="Vuelve a descargar aunque el mp3 ya exista.",
@@ -107,6 +138,11 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    # --release-id y --list-releases fijan/listan UNA edición: no tienen
+    # sentido en modo lote, donde un solo ID no puede valer para varios álbumes.
+    if args.from_file and (args.release_id or args.list_releases):
+        parser.error("--release-id/--list-releases no son válidos con --from-file")
+
     if args.from_file:
         albums = read_album_list(args.from_file)
         if not albums:
@@ -117,11 +153,16 @@ def main():
             parser.error("se requieren 'artist' y 'album' (o --from-file)")
         albums = [(args.artist, args.album)]
 
+    # Solo listar ediciones y salir (no descarga nada).
+    if args.list_releases:
+        print_releases(args.artist, args.album)
+        return
+
     total_failed = 0
 
     for artist, album in albums:
         try:
-            data = get_metadata(artist, album)
+            data = get_metadata(artist, album, args.release_id)
         except Exception as e:
             print(f"Metadata error for '{artist} - {album}': {e}")
             total_failed += 1
